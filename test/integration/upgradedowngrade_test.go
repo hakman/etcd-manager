@@ -29,8 +29,11 @@ import (
 
 func TestUpgradeDowngrade(t *testing.T) {
 	for _, fromVersion := range etcdversions.AllEtcdVersions {
+		if fromVersion == etcdversions.Version_2_2_1 {
+			continue
+		}
 		for _, toVersion := range etcdversions.AllEtcdVersions {
-			if fromVersion == toVersion {
+			if fromVersion == toVersion || toVersion == etcdversions.Version_2_2_1 {
 				continue
 			}
 

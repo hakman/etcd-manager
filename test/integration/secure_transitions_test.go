@@ -30,7 +30,7 @@ import (
 )
 
 func TestEnableTLS(t *testing.T) {
-	for _, etcdVersion := range []string{"2.2.1", "3.2.24"} {
+	for _, etcdVersion := range []string{"3.4.3", "3.4.13"} {
 		for _, nodeCount := range []int{1, 3} {
 			t.Run("etcdVersion="+etcdVersion+",nodeCount="+strconv.Itoa(nodeCount), func(t *testing.T) {
 				ctx := context.TODO()

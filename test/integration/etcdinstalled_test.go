@@ -25,6 +25,9 @@ import (
 
 func TestEtcdInstalled(t *testing.T) {
 	for _, etcdVersion := range etcdversions.AllEtcdVersions {
+		if etcdVersion == etcdversions.Version_2_2_1 {
+			continue
+		}
 		t.Run("etcdVersion="+etcdVersion, func(t *testing.T) {
 			{
 				bindir, err := etcd.BindirForEtcdVersion(etcdVersion, "etcd")
