@@ -36,6 +36,8 @@ import (
 	"k8s.io/klog/v2"
 	"k8s.io/mount-utils"
 	utilexec "k8s.io/utils/exec"
+	"sigs.k8s.io/etcd-manager/pkg/hostexec"
+	"sigs.k8s.io/etcd-manager/pkg/sysmount"
 	"sigs.k8s.io/etcd-manager/pkg/volumes"
 )
 
@@ -151,6 +153,9 @@ func (mds MetadataService) getFromConfigDrive() (*InstanceMetadata, error) {
 			return nil, fmt.Errorf("unable to run blkid: %v", err)
 		}
 		dev = strings.TrimSpace(string(out))
+		if volumes.Containerized && strings.HasPrefix(dev, "/") {
+			dev = volumes.PathFor(dev)
+		}
 	}
 
 	err := mds.mounter.Mount(dev, mds.mountTarget, "iso9660", []string{"ro"})
@@ -249,13 +254,24 @@ func newMetadataService(serviceURL string, configDrivePath string, mounter *moun
 }
 
 // getDefaultMounter returns a mount and executor interface to use for getting metadata from a config drive
-func getDefaultMounter() *mount.SafeFormatAndMount {
+func getDefaultMounter() (*mount.SafeFormatAndMount, error) {
+	if volumes.Containerized {
+		exec, err := hostexec.New(volumes.PathFor("/"))
+		if err != nil {
+			return nil, err
+		}
+		return &mount.SafeFormatAndMount{
+			Interface: sysmount.New(),
+			Exec:      exec,
+		}, nil
+	}
+
 	mounter := mount.New("")
 	exec := utilexec.New()
 	return &mount.SafeFormatAndMount{
 		Interface: mounter,
 		Exec:      exec,
-	}
+	}, nil
 }
 
 func getLocalMetadata() (*InstanceMetadata, error) {
@@ -265,7 +281,12 @@ func getLocalMetadata() (*InstanceMetadata, error) {
 	}
 	defer os.Remove(mountTarget)
 
-	return newMetadataService(MetadataLatestServiceURL, MetadataLatestPath, getDefaultMounter(), mountTarget, DefaultMetadataSearchOrder).getMetadata()
+	mounter, err := getDefaultMounter()
+	if err != nil {
+		return nil, err
+	}
+
+	return newMetadataService(MetadataLatestServiceURL, MetadataLatestPath, mounter, mountTarget, DefaultMetadataSearchOrder).getMetadata()
 }
 
 func getCredential() (gophercloud.AuthOptions, string, bool, error) {
@@ -518,6 +539,13 @@ func probeVolume() error {
 	}
 
 	executor := utilexec.New()
+	if volumes.Containerized {
+		var err error
+		executor, err = hostexec.New(volumes.PathFor("/"))
+		if err != nil {
+			return err
+		}
+	}
 	args := []string{"trigger"}
 	cmd := executor.Command("udevadm", args...)
 	_, err := cmd.CombinedOutput()

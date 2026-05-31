@@ -25,8 +25,9 @@ import (
 	"k8s.io/klog/v2"
 	"k8s.io/mount-utils"
 	utilexec "k8s.io/utils/exec"
-	"k8s.io/utils/nsenter"
+	"sigs.k8s.io/etcd-manager/pkg/hostexec"
 	"sigs.k8s.io/etcd-manager/pkg/hostmount"
+	"sigs.k8s.io/etcd-manager/pkg/sysmount"
 )
 
 type VolumeMountController struct {
@@ -128,9 +129,9 @@ func (k *VolumeMountController) safeFormatAndMount(volume *Volume, mountpoint st
 	resize := &mount.ResizeFs{}
 
 	if Containerized {
-		ne, err := nsenter.NewNsenter(PathFor("/"), utilexec.New())
+		ne, err := hostexec.New(PathFor("/"))
 		if err != nil {
-			return fmt.Errorf("error building ns-enter helper: %v", err)
+			return fmt.Errorf("error building host exec helper: %v", err)
 		}
 
 		// Build mount & exec & resize implementations that execute in the host namespaces
@@ -139,7 +140,7 @@ func (k *VolumeMountController) safeFormatAndMount(volume *Volume, mountpoint st
 		resize = mount.NewResizeFs(ne)
 
 		// Note that we don't use PathFor for operations going through safeFormatAndMount,
-		// because NewNsenterMounter and NewNsEnterExec will operate in the host
+		// because hostmount and hostexec will operate in the host.
 	} else {
 		ue := utilexec.New()
 		safeFormatAndMount.Interface = mount.New("")
@@ -209,7 +210,7 @@ func (k *VolumeMountController) safeFormatAndMount(volume *Volume, mountpoint st
 		target := PathFor(mountpoint)
 		options := []string{}
 
-		mounter := mount.New("")
+		mounter := sysmount.New()
 
 		mountedDevice, _, err := mount.GetDeviceNameFromMount(mounter, target)
 		if err != nil {
@@ -222,7 +223,11 @@ func (k *VolumeMountController) safeFormatAndMount(volume *Volume, mountpoint st
 			}
 		} else {
 			klog.Infof("mounting inside container: %s -> %s", source, target)
-			if err := mounter.Mount(source, target, fstype, options); err != nil {
+			containerFSType := fstype
+			if containerFSType == "" {
+				containerFSType = "ext4"
+			}
+			if err := sysmount.Mount(source, target, containerFSType, options); err != nil {
 				return fmt.Errorf("error mounting %s inside container at %s: %v", source, target, err)
 			}
 		}

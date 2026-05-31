@@ -24,7 +24,7 @@ import (
 
 	"k8s.io/klog/v2"
 	"k8s.io/mount-utils"
-	"k8s.io/utils/nsenter"
+	"sigs.k8s.io/etcd-manager/pkg/hostexec"
 )
 
 // Based on code from kubernetes/kubernetes: https://github.com/kubernetes/kubernetes/blob/release-1.15/pkg/volume/util/nsenter/nsenter_mount.go
@@ -34,12 +34,12 @@ const (
 	hostProcMountsPath = "/rootfs/proc/1/mounts"
 )
 
-func New(ne *nsenter.Nsenter) *Mounter {
+func New(ne *hostexec.Executor) *Mounter {
 	return &Mounter{ne: ne}
 }
 
 type Mounter struct {
-	ne *nsenter.Nsenter
+	ne *hostexec.Executor
 	mount.Interface
 }
 
@@ -68,21 +68,20 @@ func (n *Mounter) MountSensitive(source string, target string, fstype string, op
 	}
 
 	if bind {
-		err := n.doNsenterMount(source, target, fstype, bindOpts)
+		err := n.doHostMount(source, target, fstype, bindOpts)
 		if err != nil {
 			return err
 		}
-		return n.doNsenterMount(source, target, fstype, bindRemountOpts)
+		return n.doHostMount(source, target, fstype, bindRemountOpts)
 	}
 
-	return n.doNsenterMount(source, target, fstype, options)
+	return n.doHostMount(source, target, fstype, options)
 }
 
-// doNsenterMount nsenters the host's mount namespace and performs the
-// requested mount.
-func (n *Mounter) doNsenterMount(source, target, fstype string, options []string) error {
-	klog.V(5).Infof("nsenter mount %s %s %s %v", source, target, fstype, options)
-	cmd, args := n.makeNsenterArgs(source, target, fstype, options)
+// doHostMount runs the requested mount in the host's mount namespace.
+func (n *Mounter) doHostMount(source, target, fstype string, options []string) error {
+	klog.V(5).Infof("host mount %s %s %s %v", source, target, fstype, options)
+	cmd, args := n.makeHostMountArgs(source, target, fstype, options)
 	outputBytes, err := n.ne.Exec(cmd, args).CombinedOutput()
 	if len(outputBytes) != 0 {
 		klog.V(5).Infof("Output of mounting %s to %s: %v", source, target, string(outputBytes))
@@ -90,18 +89,16 @@ func (n *Mounter) doNsenterMount(source, target, fstype string, options []string
 	return err
 }
 
-// makeNsenterArgs makes a list of argument to nsenter in order to do the
-// requested mount.
-func (n *Mounter) makeNsenterArgs(source, target, fstype string, options []string) (string, []string) {
+// makeHostMountArgs makes a command and argument list for a host mount.
+func (n *Mounter) makeHostMountArgs(source, target, fstype string, options []string) (string, []string) {
 	mountCmd := n.ne.AbsHostPath("mount")
 	mountArgs := mount.MakeMountArgs(source, target, fstype, options)
 
 	if systemdRunPath, hasSystemd := n.ne.SupportsSystemd(); hasSystemd {
 		// Complete command line:
-		// nsenter --mount=/rootfs/proc/1/ns/mnt -- /bin/systemd-run --description=... --scope -- /bin/mount -t <type> <what> <where>
+		// etcd-manager __hostexec -- /bin/systemd-run --description=... --scope -- /bin/mount -t <type> <what> <where>
 		// Expected flow is:
-		// * nsenter breaks out of container's mount namespace and executes
-		//   host's systemd-run.
+		// * hostexec enters the host mount namespace and executes host's systemd-run.
 		// * systemd-run creates a transient scope (=~ cgroup) and executes its
 		//   argument (/bin/mount) there.
 		// * mount does its job, forks a fuse daemon if necessary and finishes.
@@ -116,9 +113,9 @@ func (n *Mounter) makeNsenterArgs(source, target, fstype string, options []strin
 	} else {
 		// Fall back to simple mount when the host has no systemd.
 		// Complete command line:
-		// nsenter --mount=/rootfs/proc/1/ns/mnt -- /bin/mount -t <type> <what> <where>
+		// etcd-manager __hostexec -- /bin/mount -t <type> <what> <where>
 		// Expected flow is:
-		// * nsenter breaks out of container's mount namespace and executes host's /bin/mount.
+		// * hostexec enters the host mount namespace and executes host's /bin/mount.
 		// * mount does its job, forks a fuse daemon if necessary and finishes.
 		// * Any fuse daemon runs in cgroup of kubelet docker container,
 		//   restart of kubelet container will kill it!
