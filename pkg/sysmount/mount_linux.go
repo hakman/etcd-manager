@@ -38,9 +38,18 @@ func New() *Mounter {
 
 // Mount mounts source on target.
 func Mount(source, target, fstype string, options []string) error {
-	flags, data := mountOptions(options)
+	return doMount(source, target, fstype, options, nil, nil)
+}
+
+func doMount(source, target, fstype string, options []string, sensitiveOptions []string, mountFlags []string) error {
+	if err := validateMountOptions(options, sensitiveOptions, mountFlags); err != nil {
+		return err
+	}
+
+	allOptions := append(append([]string{}, options...), sensitiveOptions...)
+	flags, data := mountOptions(allOptions)
 	if err := unix.Mount(source, target, fstype, flags, data); err != nil {
-		return fmt.Errorf("mount %q on %q type %q options %v: %w", source, target, fstype, options, err)
+		return mountError(source, target, fstype, options, sensitiveOptions, err)
 	}
 	return nil
 }
@@ -95,8 +104,7 @@ func (m *Mounter) Mount(source string, target string, fstype string, options []s
 }
 
 func (m *Mounter) MountSensitive(source string, target string, fstype string, options []string, sensitiveOptions []string) error {
-	allOptions := append(append([]string{}, options...), sensitiveOptions...)
-	return Mount(source, target, fstype, allOptions)
+	return doMount(source, target, fstype, options, sensitiveOptions, nil)
 }
 
 func (m *Mounter) MountSensitiveWithoutSystemd(source string, target string, fstype string, options []string, sensitiveOptions []string) error {
@@ -104,7 +112,7 @@ func (m *Mounter) MountSensitiveWithoutSystemd(source string, target string, fst
 }
 
 func (m *Mounter) MountSensitiveWithoutSystemdWithMountFlags(source string, target string, fstype string, options []string, sensitiveOptions []string, mountFlags []string) error {
-	return m.MountSensitive(source, target, fstype, options, sensitiveOptions)
+	return doMount(source, target, fstype, options, sensitiveOptions, mountFlags)
 }
 
 func (m *Mounter) Unmount(target string) error {
