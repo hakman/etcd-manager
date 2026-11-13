@@ -66,9 +66,11 @@ vendor:
 	go mod tidy
 	go mod vendor
 
+# go list marks tool-only modules (go.mod tool directives) as indirect, so `go get tool` upgrades them.
 .PHONY: goget
 goget:
 	go get $(shell go list -f '{{if not (or .Main .Indirect)}}{{.Path}}{{end}}' -mod=mod -m all)
+	go get tool
 
 .PHONY: depup
 depup: goget vendor
@@ -101,9 +103,16 @@ export-etcd-manager-ctl-amd64 export-etcd-manager-ctl-arm64: export-etcd-manager
 	KO_DOCKER_REPO="registry.k8s.io/etcd-manager/etcd-manager-ctl" ${KO} build --tags ${STABLE_DOCKER_TAG} --platform=linux/$* -B --push=false --tarball=dist/etcd-manager-ctl-$*.tar ./cmd/etcd-manager/
 	gzip -f dist/etcd-manager-ctl-$*.tar
 
+# etcd-manager-base adds /ko-app/kube-log-runner to the go-runner image. kube-log-runner accepts
+# the go-runner flags and can also rotate the log file (--log-file-size, --log-file-age).
+# The tag differs from the release tag, so the release snapshot does not promote this image.
+.PHONY: push-etcd-manager-base
+push-etcd-manager-base:
+	KO_DOCKER_REPO="${IMAGE_BASE}etcd-manager-base" ${KO} build --tags ${STABLE_DOCKER_TAG}-base --platform=linux/amd64,linux/arm64 --bare k8s.io/component-base/logs/kube-log-runner
+
 .PHONY: push-etcd-manager-ctl
-push-etcd-manager-ctl:
-	KO_DOCKER_REPO="${IMAGE_BASE}etcd-manager-ctl" ${KO} build --tags ${STABLE_DOCKER_TAG} --platform=linux/amd64,linux/arm64 --bare ./cmd/etcd-manager-ctl/
+push-etcd-manager-ctl: push-etcd-manager-base
+	KO_DEFAULTBASEIMAGE="${IMAGE_BASE}etcd-manager-base:${STABLE_DOCKER_TAG}-base" KO_DOCKER_REPO="${IMAGE_BASE}etcd-manager-ctl" ${KO} build --tags ${STABLE_DOCKER_TAG} --platform=linux/amd64,linux/arm64 --bare ./cmd/etcd-manager-ctl/
 
 .PHONY: export-etcd-manager-slim-amd64 export-etcd-manager-slim-arm64
 export-etcd-manager-slim-amd64 export-etcd-manager-slim-arm64: export-etcd-manager-slim-%:
